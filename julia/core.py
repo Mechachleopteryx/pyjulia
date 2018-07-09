@@ -174,7 +174,7 @@ def module_functions(julia, module):
             continue
         try:
             # skip undefined names
-            if not julia.eval("isdefined(:%s)" % name):
+            if not julia.eval("@isdefined(:%s)" % name):
                 continue
             # skip modules for now
             if isamodule(julia, name):
@@ -254,22 +254,25 @@ class Julia(object):
             juliainfo = subprocess.check_output(
                 [runtime, "-e",
                  """
-                 println(VERSION < v"0.7.0-DEV.3073" ? JULIA_HOME : Base.Sys.BINDIR)
+                 using Libdl, UUIDs
+                 println(Base.Sys.BINDIR)
                  println(Libdl.dlpath(string("lib", splitext(Base.julia_exename())[1])))
                  println(unsafe_string(Base.JLOptions().image_file))
-                 PyCall_depsfile = Pkg.dir("PyCall","deps","deps.jl")
+                 pkg = Base.PkgId(UUID("438e738f-606a-5dbb-bf0a-cddfbfd45ab0"), "PyCall")
+                 sourcepath = Base.locate_package(pkg)
+                 PyCall_depsfile = normpath(dirname(sourcepath), "..", "deps", "deps.jl")
                  if isfile(PyCall_depsfile)
-                    eval(Module(:__anon__),
+                    Core.eval(Module(:__anon__),
                         Expr(:toplevel,
-                         :(Main.Base.include($PyCall_depsfile)),
+                         :(Main.Base.include(@__MODULE__, $PyCall_depsfile)),
                          :(println(pyprogramname))))
                  else
                     println("nowhere")
                  end
                  """])
-            JULIA_HOME, libjulia_path, image_file, depsjlexe = juliainfo.decode("utf-8").rstrip().split("\n")
+            _JULIA_HOME, libjulia_path, image_file, depsjlexe = juliainfo.decode("utf-8").rstrip().split("\n")
             exe_differs = not depsjlexe == sys.executable
-            self._debug("JULIA_HOME = %s,  libjulia_path = %s" % (JULIA_HOME, libjulia_path))
+            self._debug("_JULIA_HOME = %s,  libjulia_path = %s" % (_JULIA_HOME, libjulia_path))
             if not os.path.exists(libjulia_path):
                 raise JuliaError("Julia library (\"libjulia\") not found! {}".format(libjulia_path))
 
@@ -284,7 +287,7 @@ class Julia(object):
                 if jl_runtime_path:
                     jl_init_path = os.path.dirname(os.path.realpath(jl_runtime_path)).encode("utf-8")
                 else:
-                    jl_init_path = JULIA_HOME.encode("utf-8") # initialize with JULIA_HOME
+                    jl_init_path = _JULIA_HOME.encode("utf-8") # initialize with JULIA_HOME
 
             use_separate_cache = exe_differs or determine_if_statically_linked()
             if use_separate_cache:
@@ -356,14 +359,14 @@ class Julia(object):
                 os.environ["PYCALL_LIBJULIA_PATH"] = os.path.dirname(libjulia_path)
                 # Add a private cache directory. PyCall needs a different
                 # configuration and so do any packages that depend on it.
-                self._call(u"unshift!(Base.LOAD_CACHE_PATH, abspath(Pkg.Dir._pkgroot()," +
-                    "\"lib\", \"pyjulia%s-v$(VERSION.major).$(VERSION.minor)\"))" % sys.version_info[0])
+                # self._call(u"unshift!(Base.LOAD_CACHE_PATH, abspath(Pkg.Dir._pkgroot()," +
+                #    "\"lib\", \"pyjulia%s-v$(VERSION.major).$(VERSION.minor)\"))" % sys.version_info[0])
                 # If PyCall.ji does not exist, create an empty file to force
                 # recompilation
                 self._call(u"""
-                    isdir(Base.LOAD_CACHE_PATH[1]) ||
-                        mkpath(Base.LOAD_CACHE_PATH[1])
-                    depsfile = joinpath(Base.LOAD_CACHE_PATH[1],"PyCall.ji")
+                    isdir(Base.DEPOT_PATH[1]) ||
+                        mkpath(Base.DEPOT_PATH[1])
+                    depsfile = joinpath(Base.DEPOT_PATH[1],"PyCall.ji")
                     isfile(depsfile) || touch(depsfile)
                 """)
 
